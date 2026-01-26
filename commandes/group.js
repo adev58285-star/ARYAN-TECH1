@@ -14,7 +14,7 @@ zokou({ nomCom: "tagall", categorie: 'Group', reaction: "🐝" }, async (dest, z
   let membresGroupe = await infosGroupe.participants
   var tag = "";
   tag += `╭─────────────━┈⊷ 
-│ ᴛɪᴍɴᴀsᴀ ᴛᴍᴅ TAG
+│ AYRAN TECH GROUP TAG
 ╰─────────────━┈⊷ 
 │👥 *Group* : ${nomGroupe} 
 │👤 *Hey😀* : *${nomAuteurMessage}* │📜 *Message* : *${mess}* ╰─────────────━┈⊷
