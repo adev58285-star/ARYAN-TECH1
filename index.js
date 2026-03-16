@@ -60,11 +60,11 @@ async function authentification() {
         //console.log("le data "+data)
         if (!fs.existsSync(__dirname + "/auth/creds.json")) {
             console.log("connexion en cour ...");
-            await fs.writeFileSync(__dirname + "/auth/creds.json", atob(session), "utf8");
+            await fs.writeFile(__dirname + "/auth/creds.json", Buffer.from(session, "base64").toString("utf-8"), "utf8");
             //console.log(session)
         }
         else if (fs.existsSync(__dirname + "/auth/creds.json") && session != "zokk") {
-            await fs.writeFileSync(__dirname + "/auth/creds.json", atob(session), "utf8");
+            await fs.writeFile(__dirname + "/auth/creds.json", Buffer.from(session, "base64").toString("utf-8"), "utf8");
         }
     }
     catch (e) {
@@ -73,6 +73,26 @@ async function authentification() {
     }
 }
 authentification();
+
+// ============ GROUP METADATA CACHE ============
+const groupMetadataCache = {};
+const GROUP_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+async function getGroupMetadata(zk, groupId) {
+    const now = Date.now();
+    const cached = groupMetadataCache[groupId];
+    if (cached && (now - cached.timestamp) < GROUP_CACHE_TTL) {
+        return cached.data;
+    }
+    try {
+        const metadata = await zk.groupMetadata(groupId);
+        groupMetadataCache[groupId] = { data: metadata, timestamp: now };
+        return metadata;
+    } catch (e) {
+        return cached ? cached.data : null;
+    }
+}
+
 const store = (0, baileys_1.makeInMemoryStore)({
     logger: pino().child({ level: "silent", stream: "store" }),
 });
@@ -86,9 +106,9 @@ setTimeout(() => {
             browser: ['Timnasa md', "safari", "1.0.0"],
             printQRInTerminal: true,
             fireInitQueries: false,
-            shouldSyncHistoryMessage: true,
-            downloadHistory: true,
-            syncFullHistory: true,
+            shouldSyncHistoryMessage: false,
+            downloadHistory: false,
+            syncFullHistory: false,
             generateHighQualityLinkPreview: true,
             markOnlineOnConnect: false,
             keepAliveIntervalMs: 30_000,
@@ -188,43 +208,7 @@ if (conf.AUTOREACT_STATUS=== "yes") {
             }console.log("------ contenu du message ------");
 console.log(texte);
 
-// ================== ANTI-LINK LOGIC ==================
-if (verifGroupe && texte && !ms.key.fromMe) {
-    const etatAntiLien = await verifierEtatJid(origineMessage);
-
-    if (etatAntiLien === "on") {
-        const metadata = await zk.groupMetadata(origineMessage);
-        const admins = metadata.participants
-            .filter(p => p.admin !== null)
-            .map(p => p.id);
-
-        const botJid = zk.user.id.split(':')[0] + "@s.whatsapp.net";
-        const isBotAdmin = admins.includes(botJid);
-        const isSenderAdmin = admins.includes(auteurMessage);
-
-        if (!isBotAdmin) return;
-
-        const linkRegex = /(https?:\/\/|www\.|chat\.whatsapp\.com|t\.me|facebook\.com|youtu\.be)/gi;
-
-        if (linkRegex.test(texte)) {
-            if (isSenderAdmin) return;
-
-            await zk.sendMessage(origineMessage, {
-                delete: {
-                    remoteJid: origineMessage,
-                    fromMe: false,
-                    id: ms.key.id,
-                    participant: auteurMessage
-                }
-            });
-
-            await zk.sendMessage(origineMessage, {
-                text: `🚫 *ANTI-LINK*\n@${auteurMessage.split("@")[0]} links haziruhusiwi hapa.`,
-                mentions: [auteurMessage]
-            });
-        }
-    }
-}
+// Anti-link handled below (unified block)
 
 // ================== CHATBOT (AUTO-REPLY & AUDIO) ==================
             
@@ -973,15 +957,13 @@ zk.ev.on('group-participants.update', async (group) => {
             else if (connection == "close") {
                 let raisonDeconnexion = new boom_1.Boom(lastDisconnect?.error)?.output.statusCode;
                 if (raisonDeconnexion === baileys_1.DisconnectReason.badSession) console.log('Session id error, rescan again...');
-                else if (raisonDeconnexion === baileys_1.DisconnectReason.connectionClosed) { console.log('!!! connection closed, reconnection in progress...'); main(); }
-                else if (raisonDeconnexion === baileys_1.DisconnectReason.connectionLost) { console.log('connection error 😞,,, trying to reconnect... '); main(); }
-                else if (raisonDeconnexion === baileys_1.DisconnectReason.restartRequired) { console.log('reboot in progress ▶️'); main(); }
+                else if (raisonDeconnexion === baileys_1.DisconnectReason.connectionClosed) { console.log('Connection closed, reconnecting...'); setTimeout(main, 5000); }
+                else if (raisonDeconnexion === baileys_1.DisconnectReason.connectionLost) { console.log('Connection lost, reconnecting...'); setTimeout(main, 5000); }
+                else if (raisonDeconnexion === baileys_1.DisconnectReason.restartRequired) { console.log('Restart required...'); setTimeout(main, 5000); }
                 else {
-                    console.log('redemarrage sur le coup de l\'erreur  ',raisonDeconnexion);
-                    const {exec}=require("child_process");
-                    exec("pm2 restart all");            
+                    console.log('Restarting due to error:', raisonDeconnexion);
+                    setTimeout(main, 5000);
                 }
-                main(); 
             }
         });
 
@@ -998,7 +980,7 @@ zk.ev.on('group-participants.update', async (group) => {
             }
             let type = await FileType.fromBuffer(buffer);
             let trueFileName = './' + filename + '.' + type.ext;
-            await fs.writeFileSync(trueFileName, buffer);
+            await fs.writeFile(trueFileName, buffer);
             return trueFileName;
         };
 
