@@ -35,11 +35,14 @@ zokou({
 📊 Status: ${status}
 ⚙️ Mode: ${actionText}
 
+🛡️ *Group Admins are PROTECTED*
+   Admin links will NOT be deleted!
+
 📌 Commands:
 • ${prefixe}antilink on - Activate
 • ${prefixe}antilink off - Deactivate
-• ${prefixe}antilink mode warn - 3 strikes
-• ${prefixe}antilink mode delete - Delete only
+• ${prefixe}antilink mode warn - 3 strikes (warn then remove)
+• ${prefixe}antilink mode delete - Delete only with warning
 • ${prefixe}antilink mode remove - Remove instantly
 • ${prefixe}antilink clear @user - Reset warnings
 
@@ -51,7 +54,7 @@ zokou({
         if (cmd === "on" || cmd === "activate") {
             if (isActive) return repondre("⚠️ Anti-link is already active.");
             await enregistrerJid(dest);
-            return repondre("✅ Anti-link activated!");
+            return repondre("✅ Anti-link activated!\n\n🛡️ Group admins are protected.");
         }
 
         if (cmd === "off" || cmd === "deactivate") {
@@ -63,10 +66,12 @@ zokou({
         if (cmd === "mode") {
             const mode = arg[1]?.toLowerCase();
             if (!mode || !['warn', 'delete', 'remove'].includes(mode)) {
-                return repondre(`⚠️ Modes: warn, delete, remove\nExample: ${prefixe}antilink mode warn`);
+                return repondre(`⚠️ Available modes:\n• warn - 3 strikes then remove\n• delete - Delete only with warning\n• remove - Remove instantly\n\nExample: ${prefixe}antilink mode warn`);
             }
             await mettreAJourActionJid(dest, mode);
-            return repondre(`✅ Mode updated to: ${mode}`);
+            let modeMsg = mode === 'warn' ? '3 strikes (warn then remove)' : 
+                         mode === 'delete' ? 'Delete only with warning' : 'Remove instantly';
+            return repondre(`✅ Anti-link mode updated to: ${modeMsg}\n\n🛡️ Group admins are still protected!`);
         }
 
         if (cmd === "clear" || cmd === "reset") {
@@ -75,7 +80,7 @@ zokou({
             else if (arg[1] && arg[1].includes('@')) targetJid = arg[1].replace('@', '') + '@s.whatsapp.net';
             else if (arg[1] && /^\d+$/.test(arg[1])) targetJid = arg[1] + '@s.whatsapp.net';
             
-            if (!targetJid) return repondre(`⚠️ Reply or mention user.\nExample: ${prefixe}antilink clear @user`);
+            if (!targetJid) return repondre(`⚠️ Reply to user's message or mention them.\nExample: ${prefixe}antilink clear @user`);
             
             await resetWarnCountByJID(targetJid);
             return zk.sendMessage(dest, { text: `✅ Warnings reset for @${targetJid.split('@')[0]}`, mentions: [targetJid] }, { quoted: ms });
