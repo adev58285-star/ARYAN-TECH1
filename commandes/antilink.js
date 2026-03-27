@@ -21,7 +21,7 @@ zokou({
     try {
         const isActive = await verifierEtatJid(dest);
         
-        // No arguments - show help
+        // No arguments - show help and status
         if (!arg || !arg[0]) {
             const currentAction = await recupererActionJid(dest);
             let actionText = currentAction === 'warn' ? '⚠️ Warn (3 strikes)' : 
@@ -56,7 +56,6 @@ zokou({
                 return repondre("⚠️ Anti-link is already active in this group.");
             }
             await enregistrerJid(dest);
-            await mettreAJourActionJid(dest, 'warn');
             return repondre("✅ Anti-link has been activated successfully!\n\n⚠️ Users will receive 3 warnings before removal.");
         }
 
