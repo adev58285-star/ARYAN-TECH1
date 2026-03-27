@@ -558,13 +558,19 @@ setTimeout(() => {
                 }
             }
 
-            // ============ ANTI-LINK LOGIC (FIXED) ============
+            // ============ ANTI-LINK LOGIC (WITH DEBUG) ============
             if (!verifCom) {
                 try {
+                    console.log("=== ANTI-LINK DEBUG START ===");
+                    console.log("Message text:", texte);
+                    console.log("Is group:", verifGroupe);
+                    
                     const isAntiLinkActive = await verifierEtatJid(origineMessage);
+                    console.log("Anti-link active in DB:", isAntiLinkActive);
                     
                     // Check if message contains a link
                     const hasLink = texte && (texte.includes('https://') || texte.includes('http://') || texte.includes('www.'));
+                    console.log("Has link:", hasLink);
                     
                     if (hasLink && verifGroupe && isAntiLinkActive) {
                         console.log("🔗 Anti-link activated - link detected");
@@ -575,13 +581,21 @@ setTimeout(() => {
                         const isBotAdmin = groupAdmins.includes(idBot);
                         const isSenderAdmin = groupAdmins.includes(auteurMessage);
                         
+                        console.log("Bot admin:", isBotAdmin);
+                        console.log("Sender admin:", isSenderAdmin);
+                        console.log("Super user:", superUser);
+                        
                         // Skip if sender is admin or bot is not admin
-                        if (isSenderAdmin || !isBotAdmin) {
-                            console.log('Ignoring: sender is admin or bot not admin');
+                        if (isSenderAdmin) {
+                            console.log('Ignoring: sender is admin');
                             return;
                         }
                         
-                        // Skip if super user
+                        if (!isBotAdmin) {
+                            console.log('Ignoring: bot not admin');
+                            return;
+                        }
+                        
                         if (superUser) {
                             console.log('Ignoring: super user');
                             return;
@@ -603,9 +617,9 @@ setTimeout(() => {
                         // Delete the message first
                         try {
                             await zk.sendMessage(origineMessage, { delete: key });
-                            console.log("Message deleted successfully");
+                            console.log("✅ Message deleted successfully");
                         } catch (e) {
-                            console.log("Delete error:", e);
+                            console.log("❌ Delete error:", e.message);
                         }
                         
                         // Prepare warning message
@@ -616,15 +630,18 @@ setTimeout(() => {
                             warnMessage += `you have been removed from the group for sending a link.`;
                             await zk.sendMessage(origineMessage, { text: warnMessage, mentions: [auteurMessage] }, { quoted: ms });
                             await zk.groupParticipantsUpdate(origineMessage, [auteurMessage], "remove");
+                            console.log("User removed from group");
                         } 
                         else if (action === 'delete') {
                             warnMessage += `links are not allowed in this group. Message deleted.`;
                             await zk.sendMessage(origineMessage, { text: warnMessage, mentions: [auteurMessage] }, { quoted: ms });
+                            console.log("Warning message sent");
                         } 
                         else if (action === 'warn') {
                             const warnLimit = conf.WARN_COUNT || 3;
                             let currentWarns = await getWarnCountByJID(auteurMessage) || 0;
                             currentWarns++;
+                            console.log(`Current warns: ${currentWarns}, Limit: ${warnLimit}`);
                             
                             if (currentWarns >= warnLimit) {
                                 await ajouterUtilisateurAvecWarnCount(auteurMessage);
@@ -632,14 +649,19 @@ setTimeout(() => {
                                 await zk.sendMessage(origineMessage, { text: warnMessage, mentions: [auteurMessage] }, { quoted: ms });
                                 await zk.groupParticipantsUpdate(origineMessage, [auteurMessage], "remove");
                                 await resetWarnCountByJID(auteurMessage);
+                                console.log("User removed after reaching warn limit");
                             } else {
                                 await ajouterUtilisateurAvecWarnCount(auteurMessage);
                                 const remaining = warnLimit - currentWarns;
                                 warnMessage += `warning ${currentWarns}/${warnLimit}. You will be removed after ${remaining} more link(s).`;
                                 await zk.sendMessage(origineMessage, { text: warnMessage, mentions: [auteurMessage] }, { quoted: ms });
+                                console.log(`Warning ${currentWarns}/${warnLimit} sent`);
                             }
                         }
+                    } else {
+                        console.log("Anti-link conditions not met");
                     }
+                    console.log("=== ANTI-LINK DEBUG END ===");
                 } catch (e) {
                     console.log("Anti-link error:", e);
                 }
