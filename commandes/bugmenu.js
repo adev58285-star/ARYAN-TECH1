@@ -33,9 +33,9 @@ _Use these to test WhatsApp resilience:_
 • \`\`\`${prefixe}ui-bug\`\`\` - Interface Glitch
 • \`\`\`${prefixe}total-freeze\`\`\` - VCF Death
 • \`\`\`${prefixe}heavy-wa\`\`\` - RAM Bombard
-
+• \`\`\`${prefixe}SAMBARATISHA WASENGE\`\`\` - RAM Bombard
 *『 📞 𝚂𝚄𝙿𝙿𝙾𝚁𝚃 』*
-• *Owner:* wa.me/255637518095
+• *Owner:* wa.me/255718531880
 
 > *Warning:* These commands send heavy payloads. Use only for testing security protections.
 `;
@@ -54,8 +54,8 @@ _Use these to test WhatsApp resilience:_
                 externalAdReply: {
                     title: "ARYAN-TECH 𝙱𝚄𝙶 𝙼𝙴𝙽𝚄",
                     body: "System Vulnerability Testing",
-                    thumbnailUrl: "https://files.catbox.moe/zm113g.jpg", 
-                    sourceUrl: "https://wa.me/255637518095",
+                    thumbnailUrl: "https://files.catbox.moe/1sf5uh.jpg", 
+                    sourceUrl: "https://wa.me/255718531880",
                     mediaType: 1
                 }
             }
