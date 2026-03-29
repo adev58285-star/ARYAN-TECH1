@@ -52,21 +52,52 @@ const prefixe = conf.PREFIXE;
 const more = String.fromCharCode(8206);
 const readmore = more.repeat(4001);
 
+const readline = require("readline");
+
+function question(prompt) {
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    return new Promise(resolve => rl.question(prompt, ans => { rl.close(); resolve(ans.trim()); }));
+}
+
+let usePairingCode = false;
+let pairingPhoneNumber = "";
+
 async function authentification() {
     try {
-        if (!fs.existsSync(__dirname + "/auth/creds.json")) {
-            console.log("connexion en cour ...");
+        if (session && session !== "zokk") {
             await fs.writeFile(__dirname + "/auth/creds.json", Buffer.from(session, "base64").toString("utf-8"), "utf8");
-        } else if (fs.existsSync(__dirname + "/auth/creds.json") && session != "zokk") {
-            await fs.writeFile(__dirname + "/auth/creds.json", Buffer.from(session, "base64").toString("utf-8"), "utf8");
+            return;
+        }
+        if (fs.existsSync(__dirname + "/auth/creds.json")) {
+            const data = fs.readFileSync(__dirname + "/auth/creds.json", "utf8");
+            if (data && data.length > 5) return;
+        }
+        console.log("\n╔════════════════════════════════════╗");
+        console.log("║      ÄŖŸÄŅ-ȚËĊȞ — Authentication   ║");
+        console.log("╠════════════════════════════════════╣");
+        console.log("║  1. Paste your Session ID           ║");
+        console.log("║  2. Use your WhatsApp number        ║");
+        console.log("╚════════════════════════════════════╝");
+        const choice = await question("\nEnter your choice (1 or 2): ");
+        if (choice === "1") {
+            const sid = await question("Paste your Session ID: ");
+            const cleaned = sid.replace(/^TIMNASA-MD;;;=>/g, "").trim();
+            await fs.writeFile(__dirname + "/auth/creds.json", Buffer.from(cleaned, "base64").toString("utf-8"), "utf8");
+            console.log("✅ Session ID saved. Connecting...");
+        } else if (choice === "2") {
+            pairingPhoneNumber = await question("Enter your WhatsApp number (with country code, no +, e.g. 255700123456): ");
+            usePairingCode = true;
+            fs.removeSync(__dirname + "/auth/creds.json");
+            console.log("✅ Phone number saved. Connecting and requesting pairing code...");
+        } else {
+            console.log("Invalid choice. Restarting...");
+            process.exit(1);
         }
     } catch (e) {
-        console.log("Session Invalid " + e);
+        console.log("Authentication error: " + e);
         return;
     }
 }
-authentification();
-
 const groupMetadataCache = {};
 const GROUP_CACHE_TTL = 5 * 60 * 1000;
 
@@ -89,7 +120,8 @@ const store = (0, baileys_1.makeInMemoryStore)({
     logger: pino().child({ level: "silent", stream: "store" }),
 });
 
-setTimeout(() => {
+setTimeout(async () => {
+    await authentification();
     async function main() {
         const { version, isLatest } = await (0, baileys_1.fetchLatestBaileysVersion)();
         const { state, saveCreds } = await (0, baileys_1.useMultiFileAuthState)(__dirname + "/auth");
@@ -97,7 +129,7 @@ setTimeout(() => {
             version,
             logger: pino({ level: "silent" }),
             browser: ['Timnasa md', "safari", "1.0.0"],
-            printQRInTerminal: true,
+            printQRInTerminal: false,
             fireInitQueries: false,
             shouldSyncHistoryMessage: false,
             downloadHistory: false,
@@ -121,6 +153,25 @@ setTimeout(() => {
         };
         const zk = (0, baileys_1.default)(sockOptions);
         store.bind(zk.ev);
+
+        if (usePairingCode && !zk.authState.creds.registered) {
+            const number = pairingPhoneNumber.replace(/[^0-9]/g, "");
+            setTimeout(async () => {
+                try {
+                    const code = await zk.requestPairingCode(number);
+                    console.log("\n╔══════════════════════════════════╗");
+                    console.log("║     Your WhatsApp Pairing Code    ║");
+                    console.log("╠══════════════════════════════════╣");
+                    console.log(`║  Code: ${code}                 ║`);
+                    console.log("╠══════════════════════════════════╣");
+                    console.log("║  Open WhatsApp > Linked Devices   ║");
+                    console.log("║  > Link with phone number         ║");
+                    console.log("╚══════════════════════════════════╝\n");
+                } catch (e) {
+                    console.log("Failed to get pairing code: " + e);
+                }
+            }, 3000);
+        }
 
         if (conf.AUTOREACT_STATUS === "yes") {
             zk.ev.on("messages.upsert", async (m) => {
