@@ -87,7 +87,7 @@ async function authentification() {
         } else if (choice === "2") {
             pairingPhoneNumber = await question("Enter your WhatsApp number (with country code, no +, e.g. 255700123456): ");
             usePairingCode = true;
-            fs.removeSync(__dirname + "/auth/creds.json");
+            fs.emptyDirSync(__dirname + "/auth");
             console.log("✅ Phone number saved. Connecting and requesting pairing code...");
         } else {
             console.log("Invalid choice. Restarting...");
@@ -128,7 +128,7 @@ setTimeout(async () => {
         const sockOptions = {
             version,
             logger: pino({ level: "silent" }),
-            browser: ['Timnasa md', "safari", "1.0.0"],
+            browser: baileys_1.Browsers.ubuntu('Chrome'),
             printQRInTerminal: false,
             fireInitQueries: false,
             shouldSyncHistoryMessage: false,
