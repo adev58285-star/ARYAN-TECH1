@@ -69,8 +69,13 @@ async function authentification() {
             return;
         }
         if (fs.existsSync(__dirname + "/auth/creds.json")) {
-            const data = fs.readFileSync(__dirname + "/auth/creds.json", "utf8");
-            if (data && data.length > 5) return;
+            try {
+                const data = JSON.parse(fs.readFileSync(__dirname + "/auth/creds.json", "utf8"));
+                if (data && data.registered === true) return;
+                fs.emptyDirSync(__dirname + "/auth");
+            } catch (e) {
+                fs.emptyDirSync(__dirname + "/auth");
+            }
         }
         console.log("\n╔════════════════════════════════════╗");
         console.log("║      ÄŖŸÄŅ-ȚËĊȞ — Authentication   ║");
@@ -130,10 +135,6 @@ setTimeout(async () => {
             logger: pino({ level: "silent" }),
             browser: baileys_1.Browsers.ubuntu('Chrome'),
             printQRInTerminal: false,
-            fireInitQueries: false,
-            shouldSyncHistoryMessage: false,
-            downloadHistory: false,
-            syncFullHistory: false,
             generateHighQualityLinkPreview: true,
             markOnlineOnConnect: false,
             keepAliveIntervalMs: 30_000,
@@ -154,35 +155,36 @@ setTimeout(async () => {
         const zk = (0, baileys_1.default)(sockOptions);
         store.bind(zk.ev);
 
-        if (usePairingCode && !zk.authState.creds.registered) {
+        let pairingCodeRequested = false;
+        const showPairingCode = async () => {
+            if (!usePairingCode || zk.authState.creds.registered) return;
             const number = pairingPhoneNumber.replace(/[^0-9]/g, "");
-            const requestCode = async () => {
-                try {
-                    const code = await zk.requestPairingCode(number);
-                    console.log("\n╔══════════════════════════════════╗");
-                    console.log("║     Your WhatsApp Pairing Code    ║");
-                    console.log("╠══════════════════════════════════╣");
-                    console.log(`║  Code: ${code}${" ".repeat(Math.max(0, 19 - code.length))}║`);
-                    console.log("╠══════════════════════════════════╣");
-                    console.log("║  Open WhatsApp > Linked Devices   ║");
-                    console.log("║  > Link with phone number         ║");
-                    console.log("╚══════════════════════════════════╝\n");
-                    console.log("⏳ Code expires in ~60 seconds.");
-                    const again = await question("Press Enter to request a NEW code, or type 'skip' to wait: ");
-                    if (again.toLowerCase() !== "skip") {
-                        if (!zk.authState.creds.registered) {
-                            console.log("\n🔄 Requesting a new pairing code...");
-                            await requestCode();
-                        }
-                    }
-                } catch (e) {
-                    console.log("Failed to get pairing code: " + e);
-                    const retry = await question("Retry? (y/n): ");
-                    if (retry.toLowerCase() === "y") await requestCode();
+            try {
+                const code = await zk.requestPairingCode(number);
+                console.log("\n╔══════════════════════════════════╗");
+                console.log("║     Your WhatsApp Pairing Code    ║");
+                console.log("╠══════════════════════════════════╣");
+                console.log(`║  Code: ${code}${" ".repeat(Math.max(0, 19 - code.length))}║`);
+                console.log("╠══════════════════════════════════╣");
+                console.log("║  Open WhatsApp > Linked Devices   ║");
+                console.log("║  > Link with phone number         ║");
+                console.log("╚══════════════════════════════════╝\n");
+                console.log("⏳ Code expires in ~60 seconds.");
+                const again = await question("Press Enter to request a NEW code, or type 'skip' to wait: ");
+                if (again.toLowerCase() !== "skip" && !zk.authState.creds.registered) {
+                    pairingCodeRequested = false;
+                    console.log("\n🔄 Requesting a new pairing code...");
+                    await showPairingCode();
                 }
-            };
-            setTimeout(requestCode, 3000);
-        }
+            } catch (e) {
+                console.log("Failed to get pairing code: " + e.message);
+                const retry = await question("Retry? (y/n): ");
+                if (retry.toLowerCase() === "y") {
+                    pairingCodeRequested = false;
+                    await showPairingCode();
+                }
+            }
+        };
 
         if (conf.AUTOREACT_STATUS === "yes") {
             zk.ev.on("messages.upsert", async (m) => {
@@ -908,7 +910,11 @@ setTimeout(async () => {
         });
 
         zk.ev.on("connection.update", async (con) => {
-            const { lastDisconnect, connection } = con;
+            const { lastDisconnect, connection, qr } = con;
+            if (qr && usePairingCode && !pairingCodeRequested && !zk.authState.creds.registered) {
+                pairingCodeRequested = true;
+                showPairingCode();
+            }
             if (connection === "connecting") {
                 console.log("ℹ️ Timnasa is connecting...");
             } else if (connection === 'open') {
