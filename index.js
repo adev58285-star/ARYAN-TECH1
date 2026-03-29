@@ -156,21 +156,32 @@ setTimeout(async () => {
 
         if (usePairingCode && !zk.authState.creds.registered) {
             const number = pairingPhoneNumber.replace(/[^0-9]/g, "");
-            setTimeout(async () => {
+            const requestCode = async () => {
                 try {
                     const code = await zk.requestPairingCode(number);
                     console.log("\n╔══════════════════════════════════╗");
                     console.log("║     Your WhatsApp Pairing Code    ║");
                     console.log("╠══════════════════════════════════╣");
-                    console.log(`║  Code: ${code}                 ║`);
+                    console.log(`║  Code: ${code}${" ".repeat(Math.max(0, 19 - code.length))}║`);
                     console.log("╠══════════════════════════════════╣");
                     console.log("║  Open WhatsApp > Linked Devices   ║");
                     console.log("║  > Link with phone number         ║");
                     console.log("╚══════════════════════════════════╝\n");
+                    console.log("⏳ Code expires in ~60 seconds.");
+                    const again = await question("Press Enter to request a NEW code, or type 'skip' to wait: ");
+                    if (again.toLowerCase() !== "skip") {
+                        if (!zk.authState.creds.registered) {
+                            console.log("\n🔄 Requesting a new pairing code...");
+                            await requestCode();
+                        }
+                    }
                 } catch (e) {
                     console.log("Failed to get pairing code: " + e);
+                    const retry = await question("Retry? (y/n): ");
+                    if (retry.toLowerCase() === "y") await requestCode();
                 }
-            }, 3000);
+            };
+            setTimeout(requestCode, 3000);
         }
 
         if (conf.AUTOREACT_STATUS === "yes") {
