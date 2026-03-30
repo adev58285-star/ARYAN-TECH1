@@ -1070,33 +1070,54 @@ async function startBot() {
                 console.log(`\n⚠️  [DISCONNECT] Code: ${statusCode} | Reason: ${lastDisconnect?.error?.message || "unknown"}`);
 
                 // ── 401 / loggedOut ────────────────────────────────────────
-                // Session is revoked by WhatsApp. Must re-authenticate.
                 if (statusCode === DR.loggedOut || statusCode === 401) {
-                    console.log("🔴 [AUTH] Session logged out by WhatsApp.");
-                    console.log("   Clearing session and restarting authentication...\n");
-                    usePairingCode = false;
-                    pairingPhoneNumber = "";
-                    clearAuthDir();
-                    reconnectAttempts = 0;
-                    setTimeout(async () => {
-                        await authentification();
-                        startBot();
-                    }, 3000);
+                    if (usePairingCode && pairingPhoneNumber) {
+                        // Pairing not completed yet — this 401 just means "not
+                        // authenticated", NOT that a real session was revoked.
+                        // Keep the phone number and retry pairing after a pause
+                        // so WhatsApp's rate-limit window can reset.
+                        reconnectAttempts++;
+                        const delay = Math.min(10000 * reconnectAttempts, 60000);
+                        console.log(`[PAIR] Pairing attempt failed (401). Retrying in ${Math.round(delay / 1000)}s — do NOT re-enter your number.\n`);
+                        clearAuthDir();
+                        await fs.ensureDir(__dirname + "/auth");
+                        setTimeout(startBot, delay);
+                    } else {
+                        // A real established session was revoked by WhatsApp.
+                        console.log("🔴 [AUTH] Session logged out by WhatsApp.");
+                        console.log("   Clearing session and restarting authentication...\n");
+                        usePairingCode = false;
+                        pairingPhoneNumber = "";
+                        clearAuthDir();
+                        reconnectAttempts = 0;
+                        setTimeout(async () => {
+                            await authentification();
+                            startBot();
+                        }, 3000);
+                    }
                     return;
                 }
 
                 // ── 403 / badSession ──────────────────────────────────────
-                // Corrupt credentials — clear and re-auth
                 if (statusCode === DR.badSession || statusCode === 403 || statusCode === 500) {
-                    console.log("🔴 [AUTH] Bad/corrupt session. Clearing and re-authenticating...\n");
-                    usePairingCode = false;
-                    pairingPhoneNumber = "";
-                    clearAuthDir();
-                    reconnectAttempts = 0;
-                    setTimeout(async () => {
-                        await authentification();
-                        startBot();
-                    }, 3000);
+                    if (usePairingCode && pairingPhoneNumber) {
+                        reconnectAttempts++;
+                        const delay = Math.min(10000 * reconnectAttempts, 60000);
+                        console.log(`[PAIR] Connection error (${statusCode}). Retrying pairing in ${Math.round(delay / 1000)}s...\n`);
+                        clearAuthDir();
+                        await fs.ensureDir(__dirname + "/auth");
+                        setTimeout(startBot, delay);
+                    } else {
+                        console.log("🔴 [AUTH] Bad/corrupt session. Clearing and re-authenticating...\n");
+                        usePairingCode = false;
+                        pairingPhoneNumber = "";
+                        clearAuthDir();
+                        reconnectAttempts = 0;
+                        setTimeout(async () => {
+                            await authentification();
+                            startBot();
+                        }, 3000);
+                    }
                     return;
                 }
 
