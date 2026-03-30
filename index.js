@@ -238,8 +238,9 @@ async function startBot() {
         version,
         logger: pino({ level: "silent" }),
         browser: baileys_1.Browsers.ubuntu("Chrome"),
-        // QR mode: print ASCII QR in terminal; pairing mode: suppress QR
-        printQRInTerminal: !usePairingCode,
+        // Always false — we manually handle QR display and pairing code
+        // in connection.update so both modes use the same code path.
+        printQRInTerminal: false,
         generateHighQualityLinkPreview: true,
         markOnlineOnConnect: false,
         keepAliveIntervalMs: 15_000,
@@ -1000,33 +1001,47 @@ async function startBot() {
             const { lastDisconnect, connection, qr } = con;
 
             // ----------------------------------------------------------
-            // PAIRING CODE — fire when first QR update arrives.
-            // This is the correct moment: Noise handshake is done,
-            // WhatsApp is waiting for QR scan or pair-device IQ.
+            // QR / PAIRING CODE — both triggered when WhatsApp fires
+            // its first QR update. At that point the Noise handshake
+            // is fully complete and WhatsApp is ready to accept either
+            // a QR scan or a pair-device IQ — perfect timing for both.
             // ----------------------------------------------------------
-            if (qr && usePairingCode && pairingPhoneNumber && !pairCodeRequested && !zk.authState.creds.registered) {
-                pairCodeRequested = true;
-                (async () => {
+            if (qr) {
+                if (usePairingCode && pairingPhoneNumber && !pairCodeRequested && !zk.authState.creds.registered) {
+                    // ── OPTION 2: phone number / pairing code ────────────
+                    pairCodeRequested = true;
+                    (async () => {
+                        try {
+                            console.log(`\n[PAIR] WhatsApp ready — requesting code for +${pairingPhoneNumber}...`);
+                            const code = await zk.requestPairingCode(pairingPhoneNumber);
+                            const display = String(code).trim();
+                            console.log("\n╔═══════════════════════════════════════════╗");
+                            console.log("║         WHATSAPP PAIRING CODE             ║");
+                            console.log("╠═══════════════════════════════════════════╣");
+                            console.log(`║   Code  ➜   ${display.padEnd(28)}║`);
+                            console.log("╠═══════════════════════════════════════════╣");
+                            console.log("║  1. Open WhatsApp on your phone           ║");
+                            console.log("║  2. Tap ⋮ → Linked Devices                ║");
+                            console.log("║  3. Link a Device → Link with number      ║");
+                            console.log("║  4. Enter the 8-character code above      ║");
+                            console.log("╚═══════════════════════════════════════════╝");
+                            console.log("\n[PAIR] Enter this code in WhatsApp now — expires in ~60 s\n");
+                        } catch (e) {
+                            console.log(`\n[PAIR] ❌ Could not get pairing code: ${e.message}`);
+                            console.log("[PAIR] Retrying automatically...\n");
+                        }
+                    })();
+                } else if (!usePairingCode) {
+                    // ── OPTION 3: QR code — print it to terminal ─────────
                     try {
-                        console.log(`\n[PAIR] Requesting code for +${pairingPhoneNumber}...`);
-                        const code = await zk.requestPairingCode(pairingPhoneNumber);
-                        const padded = String(code).padEnd(12);
-                        console.log("\n╔═══════════════════════════════════════════╗");
-                        console.log("║         WHATSAPP PAIRING CODE             ║");
-                        console.log("╠═══════════════════════════════════════════╣");
-                        console.log(`║   Code ➜  ${padded}                  ║`);
-                        console.log("╠═══════════════════════════════════════════╣");
-                        console.log("║  1. Open WhatsApp on your phone           ║");
-                        console.log("║  2. Tap ⋮ → Linked Devices                ║");
-                        console.log("║  3. Link a Device → Link with number      ║");
-                        console.log("║  4. Enter the 8-character code above      ║");
-                        console.log("╚═══════════════════════════════════════════╝");
-                        console.log("\n[PAIR] Code expires in ~60 s — enter it now!\n");
+                        const qrcode = require("qrcode-terminal");
+                        console.log("\n[QR] Scan this code in WhatsApp → Linked Devices → Link a Device:\n");
+                        qrcode.generate(qr, { small: true });
+                        console.log("\n[QR] QR code refreshes every ~20 seconds if not scanned.\n");
                     } catch (e) {
-                        console.log(`\n[PAIR] ❌ Failed to get pairing code: ${e.message}`);
-                        console.log("[PAIR] Will retry automatically...\n");
+                        console.log("[QR] Could not render QR — raw string:", qr);
                     }
-                })();
+                }
             }
 
             if (connection === "connecting") {
