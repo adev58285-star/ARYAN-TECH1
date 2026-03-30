@@ -44,6 +44,7 @@ const logger_1 = __importDefault(require("@whiskeysockets/baileys/lib/Utils/logg
 const logger = logger_1.default.child({});
 logger.level = 'silent';
 const pino = require("pino");
+require("events").EventEmitter.defaultMaxListeners = 50;
 const boom_1 = require("@hapi/boom");
 const conf = require("./set");
 const axios = require("axios");
