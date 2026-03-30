@@ -65,10 +65,14 @@ const more = String.fromCharCode(8206);
 const readmore = more.repeat(4001);
 
 // ============================================================
-// WEB AUTH SERVER — QR code + pairing code + session ID
-// shown in the Replit preview browser (port 5000)
+// CONSOLE AUTH — readline-based, no web server needed
 // ============================================================
-const { startAuthServer, sendQR, sendPairCode, sendPairError, sendConnected, stopAuthServer, authEvents } = require("./framework/auth-server");
+const readline = require("readline");
+
+function ask(prompt) {
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    return new Promise(resolve => rl.question(prompt, ans => { rl.close(); resolve(ans.trim()); }));
+}
 
 // ============================================================
 // AUTH STATE — shared across reconnects
@@ -79,7 +83,6 @@ let reconnectAttempts = 0;
 const MAX_RECONNECT_DELAY = 60_000;
 let heartbeatTimer = null;
 let activeSocket = null;
-let authServerRunning = false;
 
 // ============================================================
 // CHECK if creds.json is a fully registered (paired) session
@@ -95,18 +98,19 @@ function hasValidSession() {
 
 function clearAuthDir() {
     try { fs.emptyDirSync(__dirname + "/auth"); } catch (e) {}
-    console.log("🗑️  Auth directory cleared — ready for fresh login.");
+    console.log("[AUTH] Credentials cleared.");
 }
 
 // ============================================================
-// AUTHENTICATION — fast path if SESSION_ID or valid creds exist;
-// otherwise starts the web auth server and waits for the user.
+// AUTHENTICATION — runs at startup and after loggedOut.
+// Uses console readline — no web server required.
 // ============================================================
 async function authentification() {
-    // 1. SESSION_ID from env / set.js → write directly and go
+    await fs.ensureDir(__dirname + "/auth");
+
+    // 1. SESSION_ID from env / set.js → write and go
     if (session && session !== "zokk") {
-        console.log("🔑 Using SESSION_ID from config...");
-        await fs.ensureDir(__dirname + "/auth");
+        console.log("[AUTH] Using SESSION_ID from config...");
         await fs.writeFile(
             __dirname + "/auth/creds.json",
             Buffer.from(session, "base64").toString("utf-8"),
@@ -115,59 +119,64 @@ async function authentification() {
         return;
     }
 
-    // 2. Valid registered session already on disk → use it
+    // 2. Valid registered creds on disk → use them
     if (hasValidSession()) {
-        console.log("✅ Existing session found — connecting...");
+        console.log("[AUTH] Saved session found — connecting...");
         return;
     }
 
-    // 3. Stale / unregistered creds on disk → clear them
+    // 3. Stale / unregistered creds → remove before showing menu
     if (fs.existsSync(__dirname + "/auth/creds.json")) {
-        console.log("⚠️  Stale/unregistered creds found — clearing...");
+        console.log("[AUTH] Stale credentials detected — clearing...");
         clearAuthDir();
-    }
-    await fs.ensureDir(__dirname + "/auth");
-
-    // 4. Start web auth server and wait for the user to connect
-    if (!authServerRunning) {
-        authServerRunning = true;
-        startAuthServer(5000);
+        await fs.ensureDir(__dirname + "/auth");
     }
 
-    // Will resolve when the user takes action via web UI
-    return new Promise((resolve) => {
+    // 4. Interactive console menu
+    console.log("\n╔═════════════════════════════════════════════╗");
+    console.log("║       ÄŖŸÄŅ-ȚËĊȞ  —  Authentication        ║");
+    console.log("╠═════════════════════════════════════════════╣");
+    console.log("║  1 — Paste Session ID (instant)             ║");
+    console.log("║  2 — Link with phone number (pairing code)  ║");
+    console.log("║  3 — Link with QR code (scan in WhatsApp)   ║");
+    console.log("╚═════════════════════════════════════════════╝\n");
 
-        // ── Session ID submitted ──────────────────────────────────
-        authEvents.once("session-submit", async (sid, res) => {
-            try {
-                const cleaned = sid.replace(/^TIMNASA-MD;;;=>/g, "").trim();
-                const decoded = Buffer.from(cleaned, "base64").toString("utf-8");
-                JSON.parse(decoded); // validate JSON
-                await fs.ensureDir(__dirname + "/auth");
-                await fs.writeFile(__dirname + "/auth/creds.json", decoded, "utf8");
-                res.json({ ok: true });
-                console.log("✅ Session ID saved — connecting...");
-                usePairingCode = false;
-                resolve();
-            } catch (e) {
-                res.json({ error: "Invalid session ID — not valid base64 JSON." });
-            }
-        });
+    let choice;
+    try { choice = await ask("  Enter choice (1 / 2 / 3): "); }
+    catch { choice = "3"; } // fallback if stdin unavailable
 
-        // ── Phone number submitted → pairing code mode ────────────
-        // Reply immediately with "accepted: true" so the browser
-        // shows "Code is being generated…".  The actual code is
-        // broadcast via SSE (sendPairCode) once startBot() has it.
-        authEvents.once("pair-request", async (phone, res) => {
-            pairingPhoneNumber = phone;
-            usePairingCode = true;
-            clearAuthDir();
-            await fs.ensureDir(__dirname + "/auth");
-            console.log(`📱 Pairing code requested via web UI for +${phone}`);
-            res.json({ accepted: true }); // browser shows spinner
-            resolve(); // startBot() is called next; it gets the code
-        });
-    });
+    if (choice === "1") {
+        // ── Session ID ──────────────────────────────────────────
+        const raw = await ask("  Paste Session ID: ");
+        const cleaned = raw.replace(/^TIMNASA-MD;;;=>/g, "").trim();
+        try {
+            const decoded = Buffer.from(cleaned, "base64").toString("utf-8");
+            JSON.parse(decoded); // ensure valid JSON
+            await fs.writeFile(__dirname + "/auth/creds.json", decoded, "utf8");
+            console.log("\n[AUTH] Session ID saved — connecting...\n");
+        } catch {
+            console.log("\n[AUTH] ❌ Invalid session ID. Try again.\n");
+            return authentification();
+        }
+
+    } else if (choice === "2") {
+        // ── Pairing code ────────────────────────────────────────
+        const raw = await ask("  Enter your WhatsApp number (country code, no +):\n  Example: 254700123456\n  > ");
+        pairingPhoneNumber = raw.replace(/[^0-9]/g, "");
+        if (pairingPhoneNumber.length < 7) {
+            console.log("\n[AUTH] ❌ Invalid number. Try again.\n");
+            return authentification();
+        }
+        usePairingCode = true;
+        console.log(`\n[AUTH] Pairing mode set for +${pairingPhoneNumber}`);
+        console.log("[AUTH] Connecting — your code will appear shortly...\n");
+
+    } else {
+        // ── QR code (option 3 or any other input) ───────────────
+        usePairingCode = false;
+        console.log("\n[AUTH] QR mode — a QR code will print in this console.");
+        console.log("[AUTH] Open WhatsApp → Linked Devices → Link a Device → Scan QR\n");
+    }
 }
 const groupMetadataCache = {};
 const GROUP_CACHE_TTL = 5 * 60 * 1000;
@@ -229,8 +238,8 @@ async function startBot() {
         version,
         logger: pino({ level: "silent" }),
         browser: baileys_1.Browsers.ubuntu("Chrome"),
-        // QR is sent to the web UI, never printed to terminal
-        printQRInTerminal: false,
+        // QR mode: print ASCII QR in terminal; pairing mode: suppress QR
+        printQRInTerminal: !usePairingCode,
         generateHighQualityLinkPreview: true,
         markOnlineOnConnect: false,
         keepAliveIntervalMs: 15_000,
@@ -252,23 +261,34 @@ async function startBot() {
     store.bind(zk.ev);
 
     // ----------------------------------------------------------
-    // PAIRING CODE — called immediately after socket creation.
-    // requestPairingCode() internally waits for the WebSocket
-    // to open before sending the IQ, so no manual delay needed.
-    // The code is broadcast to the browser via SSE (sendPairCode).
+    // PAIRING CODE — call immediately after socket creation.
+    // Baileys' requestPairingCode() awaits socket open internally,
+    // so no manual setTimeout is needed. This fires before WhatsApp
+    // starts its QR handshake, preventing the 408 QR timeout.
     // ----------------------------------------------------------
     if (usePairingCode && !zk.authState.creds.registered) {
         (async () => {
             try {
-                console.log(`📡 Requesting pairing code for +${pairingPhoneNumber}...`);
+                console.log(`\n[PAIR] Requesting code for +${pairingPhoneNumber}...`);
                 const code = await zk.requestPairingCode(pairingPhoneNumber);
-                console.log(`\n✅ Pairing code for +${pairingPhoneNumber}: ${code}`);
-                console.log(`   Enter this code in WhatsApp → Linked Devices → Link a Device → Link with phone number\n`);
-                // Push code to browser via SSE
-                sendPairCode(code);
+
+                console.log("\n╔═══════════════════════════════════════════════════╗");
+                console.log("║           WHATSAPP PAIRING CODE                   ║");
+                console.log("╠═══════════════════════════════════════════════════╣");
+                console.log(`║   Code ➜  ${code}                               ║`);
+                console.log("╠═══════════════════════════════════════════════════╣");
+                console.log("║  Steps:                                           ║");
+                console.log("║  1. Open WhatsApp on your phone                   ║");
+                console.log("║  2. Tap ⋮ (menu) → Linked Devices                 ║");
+                console.log("║  3. Tap  Link a Device                            ║");
+                console.log("║  4. On the camera screen tap  Link with number    ║");
+                console.log("║  5. Type the 8-character code above               ║");
+                console.log("╚═══════════════════════════════════════════════════╝");
+                console.log("\n[PAIR] Code expires in ~60 seconds — enter it now!\n");
+
             } catch (e) {
-                console.log(`❌ Pairing code request failed: ${e.message}`);
-                sendPairError(`Could not get code: ${e.message}. Tap "Request New Code" to try again.`);
+                console.log(`\n[PAIR] ❌ Failed to get pairing code: ${e.message}`);
+                console.log("[PAIR] The bot will reconnect and try again automatically...\n");
             }
         })();
     }
@@ -1002,11 +1022,7 @@ async function startBot() {
         zk.ev.on("connection.update", async (con) => {
             const { lastDisconnect, connection, qr } = con;
 
-            // Stream QR code to the web auth UI (browser preview)
-            if (qr && !usePairingCode) {
-                sendQR(qr);
-                console.log("📷 QR code updated — open the Replit preview to scan it.");
-            }
+            // QR is handled by printQRInTerminal:true in socket options
 
             if (connection === "connecting") {
                 console.log("⏳ [CONNECT] Connecting to WhatsApp...");
@@ -1017,9 +1033,6 @@ async function startBot() {
                 usePairingCode = false; // pairing done — clear flag
                 console.log("\n✅ [CONNECT] WhatsApp connected successfully!");
                 console.log(`   Logged in as: ${zk.user?.id}`);
-                // Notify web auth UI that we're connected
-                sendConnected();
-
                 // Start heartbeat to prevent idle disconnects
                 startHeartbeat(zk);
 
@@ -1121,27 +1134,6 @@ async function startBot() {
         return zk;
 }
 
-// ============================================================
-// GLOBAL PAIR-REQUEST HANDLER — handles "Request New Code"
-// button clicks from the web UI after the initial pairing.
-// Closes the active socket and starts a fresh pairing attempt.
-// ============================================================
-authEvents.on("pair-request", async (phone, res) => {
-    // Only handle if bot is not yet connected (still pairing)
-    if (!usePairingCode && activeSocket && activeSocket.user) return; // already connected
-    pairingPhoneNumber = phone;
-    usePairingCode = true;
-    clearAuthDir();
-    await fs.ensureDir(__dirname + "/auth");
-    console.log(`🔄 New pairing code requested via web UI for +${phone}`);
-    res.json({ accepted: true });
-    // Close current socket so startBot() creates a fresh one
-    if (activeSocket) {
-        try { activeSocket.end(undefined); } catch (_) {}
-    }
-    reconnectAttempts = 0;
-    setTimeout(startBot, 1500);
-});
 
 // ============================================================
 // ENTRY POINT — authenticate then start the bot
