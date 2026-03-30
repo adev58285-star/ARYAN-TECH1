@@ -261,37 +261,13 @@ async function startBot() {
     store.bind(zk.ev);
 
     // ----------------------------------------------------------
-    // PAIRING CODE — call immediately after socket creation.
-    // Baileys' requestPairingCode() awaits socket open internally,
-    // so no manual setTimeout is needed. This fires before WhatsApp
-    // starts its QR handshake, preventing the 408 QR timeout.
+    // PAIRING CODE — requested inside connection.update when the
+    // first QR update fires. At that point the full Noise protocol
+    // handshake is complete and WhatsApp is ready to accept either
+    // a QR scan OR a pair-device IQ. Calling it earlier (before
+    // the handshake) causes "Connection Closed" / 401 every time.
     // ----------------------------------------------------------
-    if (usePairingCode && !zk.authState.creds.registered) {
-        (async () => {
-            try {
-                console.log(`\n[PAIR] Requesting code for +${pairingPhoneNumber}...`);
-                const code = await zk.requestPairingCode(pairingPhoneNumber);
-
-                console.log("\n╔═══════════════════════════════════════════════════╗");
-                console.log("║           WHATSAPP PAIRING CODE                   ║");
-                console.log("╠═══════════════════════════════════════════════════╣");
-                console.log(`║   Code ➜  ${code}                               ║`);
-                console.log("╠═══════════════════════════════════════════════════╣");
-                console.log("║  Steps:                                           ║");
-                console.log("║  1. Open WhatsApp on your phone                   ║");
-                console.log("║  2. Tap ⋮ (menu) → Linked Devices                 ║");
-                console.log("║  3. Tap  Link a Device                            ║");
-                console.log("║  4. On the camera screen tap  Link with number    ║");
-                console.log("║  5. Type the 8-character code above               ║");
-                console.log("╚═══════════════════════════════════════════════════╝");
-                console.log("\n[PAIR] Code expires in ~60 seconds — enter it now!\n");
-
-            } catch (e) {
-                console.log(`\n[PAIR] ❌ Failed to get pairing code: ${e.message}`);
-                console.log("[PAIR] The bot will reconnect and try again automatically...\n");
-            }
-        })();
-    }
+    let pairCodeRequested = false;
 
         if (conf.AUTOREACT_STATUS === "yes") {
             zk.ev.on("messages.upsert", async (m) => {
@@ -1022,7 +998,35 @@ async function startBot() {
         zk.ev.on("connection.update", async (con) => {
             const { lastDisconnect, connection, qr } = con;
 
-            // QR is handled by printQRInTerminal:true in socket options
+            // ----------------------------------------------------------
+            // PAIRING CODE — fire when first QR update arrives.
+            // This is the correct moment: Noise handshake is done,
+            // WhatsApp is waiting for QR scan or pair-device IQ.
+            // ----------------------------------------------------------
+            if (qr && usePairingCode && pairingPhoneNumber && !pairCodeRequested && !zk.authState.creds.registered) {
+                pairCodeRequested = true;
+                (async () => {
+                    try {
+                        console.log(`\n[PAIR] Requesting code for +${pairingPhoneNumber}...`);
+                        const code = await zk.requestPairingCode(pairingPhoneNumber);
+                        const padded = String(code).padEnd(12);
+                        console.log("\n╔═══════════════════════════════════════════╗");
+                        console.log("║         WHATSAPP PAIRING CODE             ║");
+                        console.log("╠═══════════════════════════════════════════╣");
+                        console.log(`║   Code ➜  ${padded}                  ║`);
+                        console.log("╠═══════════════════════════════════════════╣");
+                        console.log("║  1. Open WhatsApp on your phone           ║");
+                        console.log("║  2. Tap ⋮ → Linked Devices                ║");
+                        console.log("║  3. Link a Device → Link with number      ║");
+                        console.log("║  4. Enter the 8-character code above      ║");
+                        console.log("╚═══════════════════════════════════════════╝");
+                        console.log("\n[PAIR] Code expires in ~60 s — enter it now!\n");
+                    } catch (e) {
+                        console.log(`\n[PAIR] ❌ Failed to get pairing code: ${e.message}`);
+                        console.log("[PAIR] Will retry automatically...\n");
+                    }
+                })();
+            }
 
             if (connection === "connecting") {
                 console.log("⏳ [CONNECT] Connecting to WhatsApp...");
