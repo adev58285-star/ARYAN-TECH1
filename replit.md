@@ -20,6 +20,17 @@ A feature-rich, multi-device WhatsApp bot built with Node.js using the Baileys l
 - `wa-sticker-formatter` — sticker creation
 - `dotenv` — environment variable management
 
+## Connection Architecture (Production-grade)
+- **Process guards:** `uncaughtException` + `unhandledRejection` handlers prevent crashes
+- **Authentication flow:** 3-option interactive menu (Session ID / Pairing code / QR code)
+  - Stale/unregistered creds auto-cleared on startup
+  - 401 (loggedOut) triggers auth menu instead of looping
+  - 403/500 (badSession) also triggers clean re-auth
+- **Reconnect:** Exponential backoff (5s → 60s cap) for all disconnect reasons
+- **Heartbeat:** Sends `sendPresenceUpdate('available')` every 25s to prevent idle disconnects
+- **Keepalive:** Baileys `keepAliveIntervalMs: 15_000` WebSocket pings
+- **Restart command:** `commandes/restart.js` — `.restart` exits cleanly (workflow auto-restarts), session preserved
+
 ## Workflow
 - **Start application** — runs `node index.js` as a console workflow
 

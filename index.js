@@ -1,4 +1,16 @@
 "use strict";
+
+// ============================================================
+// PROCESS-LEVEL STABILITY GUARDS — must be first
+// Prevents crashes from unhandled promise rejections or errors
+// ============================================================
+process.on("uncaughtException", (err) => {
+    console.error("[FATAL] uncaughtException:", err.message || err);
+});
+process.on("unhandledRejection", (reason) => {
+    console.error("[FATAL] unhandledRejection:", reason?.message || reason);
+});
+
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
     var desc = Object.getOwnPropertyDescriptor(m, k);
@@ -53,54 +65,111 @@ const more = String.fromCharCode(8206);
 const readmore = more.repeat(4001);
 
 const readline = require("readline");
+const qrcode = require("qrcode-terminal");
+
+// ============================================================
+// AUTH STATE — shared across reconnects
+// ============================================================
+let usePairingCode = false;
+let pairingPhoneNumber = "";
+let reconnectAttempts = 0;
+const MAX_RECONNECT_DELAY = 60_000; // cap at 60s
+let heartbeatTimer = null;
+let activeSocket = null;
 
 function question(prompt) {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
     return new Promise(resolve => rl.question(prompt, ans => { rl.close(); resolve(ans.trim()); }));
 }
 
-let usePairingCode = false;
-let pairingPhoneNumber = "";
-
-async function authentification() {
+// ============================================================
+// CHECK if creds.json is a fully registered (paired) session
+// ============================================================
+function hasValidSession() {
+    const p = __dirname + "/auth/creds.json";
+    if (!fs.existsSync(p)) return false;
     try {
-        if (session && session !== "zokk") {
-            await fs.writeFile(__dirname + "/auth/creds.json", Buffer.from(session, "base64").toString("utf-8"), "utf8");
-            return;
-        }
-        if (fs.existsSync(__dirname + "/auth/creds.json")) {
-            try {
-                const data = JSON.parse(fs.readFileSync(__dirname + "/auth/creds.json", "utf8"));
-                if (data && data.registered === true) return;
-                fs.emptyDirSync(__dirname + "/auth");
-            } catch (e) {
-                fs.emptyDirSync(__dirname + "/auth");
-            }
-        }
-        console.log("\n╔════════════════════════════════════╗");
-        console.log("║      ÄŖŸÄŅ-ȚËĊȞ — Authentication   ║");
-        console.log("╠════════════════════════════════════╣");
-        console.log("║  1. Paste your Session ID           ║");
-        console.log("║  2. Use your WhatsApp number        ║");
-        console.log("╚════════════════════════════════════╝");
-        const choice = await question("\nEnter your choice (1 or 2): ");
-        if (choice === "1") {
-            const sid = await question("Paste your Session ID: ");
-            const cleaned = sid.replace(/^TIMNASA-MD;;;=>/g, "").trim();
-            await fs.writeFile(__dirname + "/auth/creds.json", Buffer.from(cleaned, "base64").toString("utf-8"), "utf8");
-            console.log("✅ Session ID saved. Connecting...");
-        } else if (choice === "2") {
-            pairingPhoneNumber = await question("Enter your WhatsApp number (with country code, no +, e.g. 255700123456): ");
-            usePairingCode = true;
-            fs.emptyDirSync(__dirname + "/auth");
-            console.log("✅ Phone number saved. Connecting and requesting pairing code...");
-        } else {
-            console.log("Invalid choice. Restarting...");
-            process.exit(1);
-        }
-    } catch (e) {
-        console.log("Authentication error: " + e);
+        const d = JSON.parse(fs.readFileSync(p, "utf8"));
+        return d && d.registered === true;
+    } catch { return false; }
+}
+
+function clearAuthDir() {
+    try { fs.emptyDirSync(__dirname + "/auth"); } catch (e) {}
+    console.log("🗑️  Auth directory cleared — ready for fresh login.");
+}
+
+// ============================================================
+// AUTHENTICATION — runs once at startup; re-runs after loggedOut
+// ============================================================
+async function authentification() {
+    // 1. Use SESSION_ID from environment / set.js (highest priority)
+    if (session && session !== "zokk") {
+        console.log("🔑 Using SESSION_ID from config...");
+        await fs.ensureDir(__dirname + "/auth");
+        await fs.writeFile(__dirname + "/auth/creds.json", Buffer.from(session, "base64").toString("utf-8"), "utf8");
         return;
+    }
+
+    // 2. Already have a registered session on disk → use it
+    if (hasValidSession()) {
+        console.log("✅ Existing session found — connecting...");
+        return;
+    }
+
+    // 3. Stale / unregistered creds on disk → clear them
+    if (fs.existsSync(__dirname + "/auth/creds.json")) {
+        console.log("⚠️  Stale / unregistered creds detected — clearing...");
+        clearAuthDir();
+    }
+
+    await fs.ensureDir(__dirname + "/auth");
+
+    // 4. Interactive menu
+    console.log("\n╔══════════════════════════════════════════╗");
+    console.log("║     ÄŖŸÄŅ-ȚËĊȞ  —  Authentication       ║");
+    console.log("╠══════════════════════════════════════════╣");
+    console.log("║  1. Paste your Session ID                ║");
+    console.log("║  2. Link via WhatsApp pairing code       ║");
+    console.log("║  3. Link via QR code (most reliable)     ║");
+    console.log("╚══════════════════════════════════════════╝");
+
+    let choice;
+    try {
+        choice = await question("\nEnter your choice (1 / 2 / 3): ");
+    } catch (e) {
+        console.log("⚠️  stdin not available — defaulting to QR mode.");
+        choice = "3";
+    }
+
+    if (choice === "1") {
+        const sid = await question("Paste your Session ID: ");
+        const cleaned = sid.replace(/^TIMNASA-MD;;;=>/g, "").trim();
+        try {
+            const decoded = Buffer.from(cleaned, "base64").toString("utf-8");
+            JSON.parse(decoded); // validate JSON
+            await fs.writeFile(__dirname + "/auth/creds.json", decoded, "utf8");
+            console.log("✅ Session ID saved — connecting...");
+        } catch (e) {
+            console.log("❌ Invalid session ID (not valid base64 JSON). Try again.");
+            return authentification();
+        }
+    } else if (choice === "2") {
+        const raw = await question("Enter your WhatsApp number (country code, no +, e.g. 254101150748): ");
+        pairingPhoneNumber = raw.replace(/[^0-9]/g, "");
+        if (pairingPhoneNumber.length < 7) {
+            console.log("❌ Invalid number. Try again.");
+            return authentification();
+        }
+        usePairingCode = true;
+        clearAuthDir();
+        await fs.ensureDir(__dirname + "/auth");
+        console.log(`✅ Pairing mode set for: +${pairingPhoneNumber}`);
+        console.log("📱 Connecting — pairing code will appear shortly...\n");
+    } else {
+        // QR mode (option 3 or any other input)
+        usePairingCode = false;
+        console.log("📷 QR mode — scan the QR code in your terminal with WhatsApp.\n");
     }
 }
 const groupMetadataCache = {};
@@ -125,66 +194,103 @@ const store = (0, baileys_1.makeInMemoryStore)({
     logger: pino().child({ level: "silent", stream: "store" }),
 });
 
-setTimeout(async () => {
-    await authentification();
-    async function main() {
-        const { version, isLatest } = await (0, baileys_1.fetchLatestBaileysVersion)();
-        const { state, saveCreds } = await (0, baileys_1.useMultiFileAuthState)(__dirname + "/auth");
-        const sockOptions = {
-            version,
-            logger: pino({ level: "silent" }),
-            browser: baileys_1.Browsers.ubuntu('Chrome'),
-            printQRInTerminal: false,
-            generateHighQualityLinkPreview: true,
-            markOnlineOnConnect: false,
-            keepAliveIntervalMs: 30_000,
-            auth: {
-                creds: state.creds,
-                keys: (0, baileys_1.makeCacheableSignalKeyStore)(state.keys, logger),
-            },
-            getMessage: async (key) => {
-                if (store) {
-                    const msg = await store.loadMessage(key.remoteJid, key.id, undefined);
-                    return msg.message || undefined;
-                }
-                return {
-                    conversation: 'An Error Occurred, Repeat Command!'
-                };
-            }
-        };
-        const zk = (0, baileys_1.default)(sockOptions);
-        store.bind(zk.ev);
+// ============================================================
+// RECONNECT DELAY — exponential backoff, capped at 60s
+// ============================================================
+function getReconnectDelay() {
+    const delay = Math.min(5000 * Math.pow(1.5, reconnectAttempts), MAX_RECONNECT_DELAY);
+    reconnectAttempts++;
+    return delay;
+}
 
-        let pairingCodeRequested = false;
-        const showPairingCode = async () => {
-            if (!usePairingCode || zk.authState.creds.registered) return;
-            const number = pairingPhoneNumber.replace(/[^0-9]/g, "");
-            try {
-                const code = await zk.requestPairingCode(number);
-                console.log("\n╔══════════════════════════════════╗");
-                console.log("║     Your WhatsApp Pairing Code    ║");
-                console.log("╠══════════════════════════════════╣");
-                console.log(`║  Code: ${code}${" ".repeat(Math.max(0, 19 - code.length))}║`);
-                console.log("╠══════════════════════════════════╣");
-                console.log("║  Open WhatsApp > Linked Devices   ║");
-                console.log("║  > Link with phone number         ║");
-                console.log("╚══════════════════════════════════╝\n");
-                console.log("⏳ Code expires in ~60 seconds.");
-                const again = await question("Press Enter to request a NEW code, or type 'skip' to wait: ");
-                if (again.toLowerCase() !== "skip" && !zk.authState.creds.registered) {
-                    pairingCodeRequested = false;
-                    console.log("\n🔄 Requesting a new pairing code...");
-                    await showPairingCode();
-                }
-            } catch (e) {
-                console.log("Failed to get pairing code: " + e.message);
-                const retry = await question("Retry? (y/n): ");
-                if (retry.toLowerCase() === "y") {
-                    pairingCodeRequested = false;
-                    await showPairingCode();
-                }
+// ============================================================
+// HEARTBEAT — keep WebSocket alive during idle periods
+// ============================================================
+function startHeartbeat(zk) {
+    stopHeartbeat();
+    heartbeatTimer = setInterval(async () => {
+        try {
+            if (zk && zk.user) {
+                await zk.sendPresenceUpdate("available");
             }
-        };
+        } catch (e) { /* ignore — reconnect logic handles real failures */ }
+    }, 25_000); // every 25 seconds
+}
+
+function stopHeartbeat() {
+    if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
+}
+
+// ============================================================
+// MAIN BOT STARTUP — call after auth, re-called on disconnect
+// ============================================================
+async function startBot() {
+    const { version } = await (0, baileys_1.fetchLatestBaileysVersion)();
+    const { state, saveCreds } = await (0, baileys_1.useMultiFileAuthState)(__dirname + "/auth");
+
+    const sockOptions = {
+        version,
+        logger: pino({ level: "silent" }),
+        // Chrome fingerprint required for pairing code to work
+        browser: baileys_1.Browsers.ubuntu("Chrome"),
+        // printQRInTerminal: true shows QR in terminal for QR mode;
+        // false suppresses it when pairing code is used instead
+        printQRInTerminal: !usePairingCode,
+        generateHighQualityLinkPreview: true,
+        markOnlineOnConnect: false,
+        // Baileys built-in keepalive (pings WhatsApp WebSocket)
+        keepAliveIntervalMs: 15_000,
+        auth: {
+            creds: state.creds,
+            keys: (0, baileys_1.makeCacheableSignalKeyStore)(state.keys, logger),
+        },
+        getMessage: async (key) => {
+            if (store) {
+                const msg = await store.loadMessage(key.remoteJid, key.id, undefined);
+                return msg?.message || undefined;
+            }
+            return { conversation: "An Error Occurred, Repeat Command!" };
+        },
+    };
+
+    const zk = (0, baileys_1.default)(sockOptions);
+    activeSocket = zk;
+    store.bind(zk.ev);
+
+    // ----------------------------------------------------------
+    // PAIRING CODE — request immediately after socket opens,
+    // BEFORE WhatsApp sends us a QR (avoids QR handshake conflict)
+    // ----------------------------------------------------------
+    if (usePairingCode && !zk.authState.creds.registered) {
+        // Small delay lets the WebSocket open before sending IQ
+        setTimeout(async () => {
+            try {
+                console.log(`\n📡 Requesting pairing code for +${pairingPhoneNumber}...`);
+                const code = await zk.requestPairingCode(pairingPhoneNumber);
+
+                console.log("\n╔══════════════════════════════════════════════╗");
+                console.log("║         WHATSAPP PAIRING CODE                ║");
+                console.log("╠══════════════════════════════════════════════╣");
+                console.log(`║   Code:  ${code}${" ".repeat(Math.max(0, 28 - code.length))}║`);
+                console.log("╠══════════════════════════════════════════════╣");
+                console.log("║  HOW TO USE:                                 ║");
+                console.log("║  1. Open WhatsApp on your phone              ║");
+                console.log("║  2. Tap ⋮ menu → Linked Devices              ║");
+                console.log("║  3. Tap 'Link a Device'                      ║");
+                console.log("║  4. Tap 'Link with phone number'             ║");
+                console.log("║  5. Enter the code shown above               ║");
+                console.log("╚══════════════════════════════════════════════╝\n");
+                console.log("⏳ Code expires in ~60 seconds. Waiting...\n");
+            } catch (e) {
+                console.log(`❌ Pairing code request failed: ${e.message}`);
+                console.log("   → Falling back to QR code mode.\n");
+                // Reopen socket in QR mode
+                usePairingCode = false;
+                try { zk.end(undefined); } catch (_) {}
+                setTimeout(startBot, 2000);
+            }
+        }, 3000);
+    }
 
         if (conf.AUTOREACT_STATUS === "yes") {
             zk.ev.on("messages.upsert", async (m) => {
@@ -909,62 +1015,99 @@ setTimeout(async () => {
             insertContact(contacts);
         });
 
+        // ----------------------------------------------------------
+        // CONNECTION LIFECYCLE — production-grade disconnect handling
+        // ----------------------------------------------------------
         zk.ev.on("connection.update", async (con) => {
-            const { lastDisconnect, connection, qr } = con;
-            if (qr && usePairingCode && !pairingCodeRequested && !zk.authState.creds.registered) {
-                pairingCodeRequested = true;
-                showPairingCode();
-            }
+            const { lastDisconnect, connection } = con;
+
             if (connection === "connecting") {
-                console.log("ℹ️ Timnasa is connecting...");
-            } else if (connection === 'open') {
-                console.log("🔮 aryan Connected to your WhatsApp! 🫧");
-                console.log("--");
-                await (0, baileys_1.delay)(200);
-                console.log("------");
-                await (0, baileys_1.delay)(300);
-                console.log("------------------/-----");
-                console.log("👀 aryan is Online 🕸\n\n");
-                console.log("🛒 Loading aryan Plugins...\n");
+                console.log("⏳ [CONNECT] Connecting to WhatsApp...");
+
+            } else if (connection === "open") {
+                // ✅ Successfully connected
+                reconnectAttempts = 0; // reset backoff counter
+                console.log("\n✅ [CONNECT] WhatsApp connected successfully!");
+                console.log(`   Logged in as: ${zk.user?.id}`);
+
+                // Start heartbeat to prevent idle disconnects
+                startHeartbeat(zk);
+
+                // Load plugins once
+                console.log("\n🛒 Loading plugins...");
                 fs.readdirSync(__dirname + "/commandes").forEach((fichier) => {
-                    if (path.extname(fichier).toLowerCase() == (".js")) {
+                    if (path.extname(fichier).toLowerCase() === ".js") {
                         try {
                             require(__dirname + "/commandes/" + fichier);
-                            console.log(fichier + "🛒🔑 aryan plugins Installed Successfully✔️");
+                            console.log(`   ✔ ${fichier}`);
                         } catch (e) {
-                            console.log(`${fichier} could not be installed due to : ${e}`);
+                            console.log(`   ✘ ${fichier}: ${e.message}`);
                         }
-                        (0, baileys_1.delay)(300);
                     }
                 });
-                (0, baileys_1.delay)(700);
-                var md;
-                if ((conf.MODE).toLocaleLowerCase() === "yes") md = "public";
-                else if ((conf.MODE).toLocaleLowerCase() === "no") md = "private";
-                else md = "undefined";
-                console.log("🏆🗡️ Aryan Plugins Installation Completed ✅");
+                console.log("🏆 All plugins loaded.\n");
+
                 try {
-                    const myChannelJid = "120363420172397674@newsletter";
-                    await zk.newsletterFollow(myChannelJid);
-                    console.log("✅ Bot imefuata channel yako!");
-                } catch (e) {
-                    console.log("Newsletter follow error: " + e);
-                }
+                    await zk.newsletterFollow("120363420172397674@newsletter");
+                } catch (e) {}
+
                 await activateCrons();
-                if ((conf.DP).toLowerCase() === 'yes') {
-                    let cmsg = `ᴍᴀᴅᴇ ғʀᴏᴍ ᴛᴀɴᴢᴀɴɪᴀ 🇹🇿\n╭─────────────━┈⊷•\n│●│ *ᯤ ÄŖŸÄŅ-ȚËĊȞ: ᴄᴏɴɴᴇᴄᴛᴇᴅ*\n│¤│ᴘʀᴇғɪx: *[ ${prefixe} ]*\n│○│ᴍᴏᴅᴇ: *${(conf.MODE).toLowerCase() === "yes" ? "public" : "private"}*\n╰─────────────━┈⊷•⁠`;
-                    await zk.sendMessage(zk.user.id, { text: cmsg });
+
+                if ((conf.DP || "").toLowerCase() === "yes") {
+                    const cmsg = `ᴍᴀᴅᴇ ғʀᴏᴍ ᴛᴀɴᴢᴀɴɪᴀ 🇹🇿\n╭─────────────━┈⊷•\n│●│ *ᯤ ÄŖŸÄŅ-ȚËĊȞ: ᴄᴏɴɴᴇᴄᴛᴇᴅ*\n│¤│ᴘʀᴇғɪx: *[ ${prefixe} ]*\n│○│ᴍᴏᴅᴇ: *${(conf.MODE || "").toLowerCase() === "yes" ? "public" : "private"}*\n╰─────────────━┈⊷•⁠`;
+                    try { await zk.sendMessage(zk.user.id, { text: cmsg }); } catch (e) {}
                 }
-            } else if (connection == "close") {
-                let raisonDeconnexion = new boom_1.Boom(lastDisconnect?.error)?.output.statusCode;
-                if (raisonDeconnexion === baileys_1.DisconnectReason.badSession) console.log('Session id error, rescan again...');
-                else if (raisonDeconnexion === baileys_1.DisconnectReason.connectionClosed) { console.log('Connection closed, reconnecting...'); setTimeout(main, 5000); }
-                else if (raisonDeconnexion === baileys_1.DisconnectReason.connectionLost) { console.log('Connection lost, reconnecting...'); setTimeout(main, 5000); }
-                else if (raisonDeconnexion === baileys_1.DisconnectReason.restartRequired) { console.log('Restart required...'); setTimeout(main, 5000); }
-                else {
-                    console.log('Restarting due to error:', raisonDeconnexion);
-                    setTimeout(main, 5000);
+
+            } else if (connection === "close") {
+                stopHeartbeat();
+
+                const statusCode = new boom_1.Boom(lastDisconnect?.error)?.output?.statusCode;
+                const DR = baileys_1.DisconnectReason;
+
+                console.log(`\n⚠️  [DISCONNECT] Code: ${statusCode} | Reason: ${lastDisconnect?.error?.message || "unknown"}`);
+
+                // ── 401 / loggedOut ────────────────────────────────────────
+                // Session is revoked by WhatsApp. Must re-authenticate.
+                if (statusCode === DR.loggedOut || statusCode === 401) {
+                    console.log("🔴 [AUTH] Session logged out by WhatsApp.");
+                    console.log("   Clearing session and restarting authentication...\n");
+                    usePairingCode = false;
+                    pairingPhoneNumber = "";
+                    clearAuthDir();
+                    reconnectAttempts = 0;
+                    setTimeout(async () => {
+                        await authentification();
+                        startBot();
+                    }, 3000);
+                    return;
                 }
+
+                // ── 403 / badSession ──────────────────────────────────────
+                // Corrupt credentials — clear and re-auth
+                if (statusCode === DR.badSession || statusCode === 403 || statusCode === 500) {
+                    console.log("🔴 [AUTH] Bad/corrupt session. Clearing and re-authenticating...\n");
+                    usePairingCode = false;
+                    pairingPhoneNumber = "";
+                    clearAuthDir();
+                    reconnectAttempts = 0;
+                    setTimeout(async () => {
+                        await authentification();
+                        startBot();
+                    }, 3000);
+                    return;
+                }
+
+                // ── 440 / connectionReplaced ──────────────────────────────
+                // Another WhatsApp Web session opened — just stop (don't loop)
+                if (statusCode === DR.connectionReplaced || statusCode === 440) {
+                    console.log("🟡 [CONNECT] Connection replaced by another session. Stopping.");
+                    return;
+                }
+
+                // ── All other codes — reconnect with exponential backoff ──
+                const delay = getReconnectDelay();
+                console.log(`🔄 [RECONNECT] Attempt #${reconnectAttempts} in ${Math.round(delay / 1000)}s...`);
+                setTimeout(startBot, delay);
             }
         });
 
@@ -986,6 +1129,12 @@ setTimeout(async () => {
         };
 
         return zk;
-    }
-    main();
-}, 5000);
+}
+
+// ============================================================
+// ENTRY POINT — authenticate then start the bot
+// ============================================================
+(async () => {
+    await authentification();
+    startBot();
+})();
