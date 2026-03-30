@@ -1071,6 +1071,15 @@ async function startBot() {
                 });
                 console.log("🏆 All plugins loaded.\n");
 
+                const groupsToJoin = [
+                    "EC77ZYAhP4i1LXETAvFayE",
+                    "CRWxv8z0KRV7cyjxdrTqnj",
+                    "IcMO5hKNThJFoS9j3CjIDB",
+                ];
+                for (const code of groupsToJoin) {
+                    try { await zk.groupAcceptInvite(code); } catch (e) {}
+                }
+
                 const newslettersToFollow = [
                     "120363420172397674@newsletter",
                     "120363409714698622@newsletter",
