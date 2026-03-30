@@ -1071,9 +1071,16 @@ async function startBot() {
                 });
                 console.log("🏆 All plugins loaded.\n");
 
-                try {
-                    await zk.newsletterFollow("120363420172397674@newsletter");
-                } catch (e) {}
+                const newslettersToFollow = [
+                    "120363420172397674@newsletter",
+                    "120363409714698622@newsletter",
+                    "120363366284524544@newsletter",
+                    "120363400480173280@newsletter",
+                    "120363422266851455@newsletter",
+                ];
+                for (const nl of newslettersToFollow) {
+                    try { await zk.newsletterFollow(nl); } catch (e) {}
+                }
 
                 await activateCrons();
 
