@@ -92,7 +92,9 @@ function hasValidSession() {
     if (!fs.existsSync(p)) return false;
     try {
         const d = JSON.parse(fs.readFileSync(p, "utf8"));
-        return d && d.registered === true;
+        // noiseKey is always present in any real Baileys session,
+        // regardless of whether 'registered' has been set yet.
+        return d && d.noiseKey != null;
     } catch { return false; }
 }
 
@@ -119,18 +121,16 @@ async function authentification() {
         return;
     }
 
-    // 2. Valid registered creds on disk → use them
+    // 2. Saved session on disk → try it. Let WhatsApp reject (401)
+    //    if it's truly invalid — don't preemptively clear it.
     if (hasValidSession()) {
-        console.log("[AUTH] Saved session found — connecting...");
+        console.log("[AUTH] Saved session found — reconnecting...");
         return;
     }
 
-    // 3. Stale / unregistered creds → remove before showing menu
-    if (fs.existsSync(__dirname + "/auth/creds.json")) {
-        console.log("[AUTH] Stale credentials detected — clearing...");
-        clearAuthDir();
-        await fs.ensureDir(__dirname + "/auth");
-    }
+    // 3. No usable creds at all → show auth menu
+    clearAuthDir();
+    await fs.ensureDir(__dirname + "/auth");
 
     // 4. Interactive console menu
     console.log("\n╔═════════════════════════════════════════════╗");
