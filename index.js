@@ -962,8 +962,9 @@ async function startBot() {
 
         async function activateCrons() {
             const cron = require('node-cron');
-            const { getCron } = require('./bdd/cron');
-            let crons = await getCron();
+            const { getCron, createTablecron } = require('./bdd/cron');
+            await createTablecron();          // ensure table exists before querying
+            let crons = (await getCron()) || [];
             if (crons.length > 0) {
                 for (let i = 0; i < crons.length; i++) {
                     if (crons[i].mute_at != null) {

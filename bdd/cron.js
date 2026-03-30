@@ -37,18 +37,17 @@ createTablecron();
 
 
 async function getCron() {
-
   const client = await pool.connect();
   try {
-
     const result = await client.query('SELECT * FROM cron');
     return result.rows;
   } catch (error) {
-    console.error('Erreur lors de la récupération des données de la table "cron":', error);
+    // Table may not exist yet — return empty array so callers don't crash
+    return [];
   } finally {
     client.release();
   }
- }  ;
+};
 
 
 async function addCron(group_id, rows, value) {
@@ -107,8 +106,10 @@ async function delCron(group_id) {
   }
 }
 
- module.exports = {
-          getCron,
-          addCron,
-          delCron,
-          getCronById, }
+module.exports = {
+    createTablecron,
+    getCron,
+    addCron,
+    delCron,
+    getCronById,
+}
