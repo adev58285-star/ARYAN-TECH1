@@ -15,7 +15,7 @@
   <a href="https://wa.me/255718531880">
     <img src="https://img.shields.io/badge/Contact%20Owner-25D366?style=for-the-badge&logo=whatsapp&logoColor=white" alt="Owner"/>
   </a>
-  <a href="https://github.com/happy/∆RY∆N-XMD">
+  <a href="https://github.com/adev58285-star/ARYAN-TECH1">
     <img src="https://img.shields.io/badge/GitHub-Repo-181717?style=for-the-badge&logo=github&logoColor=white" alt="GitHub"/>
   </a>
 </p>
@@ -76,7 +76,7 @@
   <tr>
     <td><b>Railway</b></td>
     <td>
-      <a href="https://railway.app/new/template?template=https://github.com/Qartde/ARYAN-XMD">
+      <a href="https://railway.app/new/template?template=https://github.com/adev58285-star/ARYAN-TECH1">
         <img src="https://img.shields.io/badge/DEPLOY%20TO%20RAILWAY-yellow?style=for-the-badge&logo=railway" width="200"/>
       </a>
     </td>
@@ -84,7 +84,7 @@
   <tr>
     <td><b>Render</b></td>
     <td>
-      <a href="https://render.com/deploy?repo=https://github.com/Qartde/ARYAN-XMD">
+      <a href="https://render.com/deploy?repo=https://github.com/adev58285-star/ARYAN-TECH1">
         <img src="https://img.shields.io/badge/DEPLOY%20TO%20RENDER-red?style=for-the-badge&logo=render" width="200"/>
       </a>
     </td>
@@ -96,13 +96,13 @@
 ### **ONE-CLICK DEPLOYMENT BUTTONS**
 
 <p align="center">
-  <a href="https://render.com/deploy?repo=https://github.com/Qartde/ARYAN-XMD">
+  <a href="https://render.com/deploy?repo=https://github.com/adev58285-star/ARYAN-TECH1">
     <img src="https://render.com/images/deploy-to-render-button.svg" alt="Deploy to Render" width="200"/>
   </a>
-  <a href="https://railway.app/new/template?template=https://github.com/Qartde/ARYAN-XMD">
+  <a href="https://railway.app/new/template?template=https://github.com/adev58285-star/ARYAN-TECH1">
     <img src="https://railway.app/button.svg" alt="Deploy on Railway" width="200"/>
   </a>
-  <a href="https://heroku.com/deploy?template=https://github.com/Qartde/ARYAN-XMD">
+  <a href="https://heroku.com/deploy?template=https://github.com/adev58285-star/ARYAN-TECH1">
     <img src="https://www.herokucdn.com/deploy/button.svg" alt="Deploy to Heroku" width="200"/>
   </a>
 </p>
@@ -140,7 +140,7 @@
 
 ```bash
 # Clone the repository
-git clone https://github.com/Qartde/ARYAN-XMD.git
+git clone https://github.com/adev58285-star/ARYAN-TECH1.git
 cd ARYAN-XMD
 
 # Install dependencies
