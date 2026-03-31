@@ -68,7 +68,7 @@
   <tr>
     <td><b>Heroku</b></td>
     <td>
-      <a href="https://dashboard.heroku.com/new?template=https://github.com/Qartde/ARYAN-XMD">
+      <a href="https://dashboard.heroku.com/new?template=https://github.com/adev58285-star/ARYAN-TECH1">
         <img src="https://img.shields.io/badge/DEPLOY%20TO%20HEROKU-blue?style=for-the-badge&logo=heroku" width="200"/>
       </a>
     </td>
